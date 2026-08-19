@@ -225,3 +225,129 @@ Flex HT is connected over USB (`vid=2752 pid=004b`).
   host and are restorable there.
 - Old binary backups: pi `tce/optional/minidsp.tcz.bak.*` and
   `/home/tc/minidsp-backup-*`.
+
+## Running the daemon (minidspd) for Home Assistant
+
+The `minidspd` daemon exposes the device over HTTP so Home Assistant (or any
+other host) can read status (volume, source, mute, preset, input/output levels)
+and send volume/source/preset commands.
+
+### 1. Persistent daemon config
+
+The `.tcz` ships a read-only `config.toml` on the squashfs, so put an
+override config somewhere persistent. `/home/tc` is in piCorePlayer's
+persist list (`/opt/.filetool.lst` -> `home`), so use it:
+
+```sh
+cat > /home/tc/minidspd.toml <<'EOF'
+[http_server]
+bind_address = "0.0.0.0:5380"
+EOF
+```
+
+Binding `0.0.0.0` exposes the API on the LAN (pi is `192.168.100.32`,
+Home Assistant is `192.168.100.160:8123`). Use `127.0.0.1:5380` if you only
+want local access.
+
+Note: the HTTP server must be enabled for the API to serve. If the config
+omits `[http_server]`, the daemon only serves the plugin-compatible TCP server
+(default `0.0.0.0:5333`).
+
+### 2. init.d control script (the piCorePlayer way)
+
+piCorePlayer has no systemd; services live as init.d scripts under
+`/usr/local/etc/init.d/` and are driven with busybox `start-stop-daemon`
+(this survives SSH session close, unlike a raw `&`). Save as
+`/usr/local/etc/init.d/minidspd`:
+
+```sh
+#!/bin/sh
+# minidspd daemon control script for piCorePlayer
+DAEMON=/usr/bin/minidspd
+CONFIG=/home/tc/minidspd.toml
+PIDFILE=/var/run/minidspd.pid
+DESC="miniDSP daemon"
+
+start() {
+    echo -n "Starting $DESC: "
+    start-stop-daemon --start --quiet --background --make-pidfile \
+        --pidfile "$PIDFILE" --exec "$DAEMON" -- -c "$CONFIG"
+    echo "OK"
+}
+stop() {
+    echo -n "Stopping $DESC: "
+    start-stop-daemon --stop --quiet --pidfile "$PIDFILE" --oknodo
+    echo "OK"
+}
+restart() { stop; sleep 1; start; }
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart) restart ;;
+    status)
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "$DESC is running (pid $(cat "$PIDFILE"))"
+        else
+            echo "$DESC is not running"
+        fi ;;
+    *) echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
+```
+
+```sh
+sudo cp <script> /usr/local/etc/init.d/minidspd
+sudo chmod +x /usr/local/etc/init.d/minidspd
+sudo /usr/local/etc/init.d/minidspd start
+sudo /usr/local/etc/init.d/minidspd status
+```
+
+### 3. Auto-start on boot
+
+Add the start to `bootlocal.sh` and persist both the script and the
+filetool list:
+
+```sh
+sudo sh -c 'echo "\n# miniDSP daemon (HTTP API for Home Assistant)\n/usr/local/etc/init.d/minidspd start" >> /opt/bootlocal.sh'
+
+# make sure the init.d script survives reboot too
+echo "usr/local/etc/init.d/minidspd" | sudo tee -a /opt/.filetool.lst
+
+# persist everything (also backs up bootlocal.sh + /home/tc config)
+sudo filetool.sh -b
+```
+
+`/opt` and `home` are already in the persist list, so `bootlocal.sh` and
+`/home/tc/minidspd.toml` are covered.
+
+### 4. Verify the API
+
+```sh
+curl -s http://127.0.0.1:5380/devices
+#   [{"url":"usb:...vid=2752&pid=004b","product_name":"FlexHt",
+#     "version":{"hw_id":31,"dsp_version":115,"serial":901213}}]
+
+curl -s http://127.0.0.1:5380/devices/0
+#   {"master":{"preset":0,"source":"Hdmi","volume":-36.0,"mute":false},
+#    "input_levels":[...], "output_levels":[...], ...}
+```
+
+### 5. HTTP API summary
+
+Base URL: `http://<pi>:5380`
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET  | `/devices` | List discovered devices |
+| GET  | `/devices/:index` | Master status (volume, source, mute, preset, levels) |
+| POST | `/devices/:index/volume/:direction` | `direction` = `up` / `down` (relative gain) |
+| POST | `/devices/:index/source/:source` | `source` = `toslink` / `spdif` / `usb` / `hdmi` |
+| POST | `/devices/:index/preset/:preset` | `preset` = 0-based config slot |
+| POST | `/devices/:index/config` | Full master config write (see schema) |
+| WS   | `/devices/:index/ws` | WebSocket bridge (live updates) |
+| GET  | `/openapi.json` | Full OpenAPI spec |
+
+Home Assistant can poll `GET /devices/0` with a RESTful sensor for volume /
+input/output levels, and drive volume/source with `rest_command` POSTs.
+(Configure those in HA's `configuration.yaml`; the daemon side is complete once
+the API above responds.)
+
