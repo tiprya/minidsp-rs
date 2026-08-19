@@ -5,6 +5,7 @@ pub mod ddrc24;
 pub mod ddrc88bm;
 pub mod flex;
 pub mod flexdl;
+pub mod flexht;
 pub mod flexhtx;
 pub mod m10x10hd;
 pub mod m2x4;

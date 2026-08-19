@@ -48,6 +48,9 @@ pub mod m2x4;
 #[cfg(feature = "device_flex")]
 pub mod flex;
 
+#[cfg(feature = "device_flexht")]
+pub mod flexht;
+
 #[cfg(feature = "device_flexhtx")]
 pub mod flexhtx;
 

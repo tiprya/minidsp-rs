@@ -31,6 +31,7 @@ all_devices = [
     "device_m2x4",
     "device_flex",
     "device_flexdl",
+    "device_flexht",
     "device_flexhtx",
 ]
 device_2x4hd = ["devices"]
@@ -45,6 +46,7 @@ device_c8x12v2 = ["devices"]
 device_m2x4 = ["devices"]
 device_flex = ["devices"]
 device_flexdl = ["devices"]
+device_flexht = ["devices"]
 device_flexhtx = ["devices"]
 devices = []
 std = []
